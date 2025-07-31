@@ -1,8 +1,7 @@
-from sshtunnel import SSHTunnelForwarder
-import psycopg2
+
 import pandas as pd
-
-
+import math
+from psycopg2.extras import execute_values
 
 
 def get_drug_reaction(drugid, con):
@@ -11,6 +10,7 @@ def get_drug_reaction(drugid, con):
     #print(drug_reaction)
     reactids = drug_reaction.iloc[:, 0]
     return reactids
+
 
 def count_drug(drugid, con):
     '''
@@ -21,6 +21,7 @@ def count_drug(drugid, con):
     drugcount = pd.read_sql(sql, con)
     return drugcount['count'].values[0]
 
+
 def count_react(reactid, con):
     '''
     Figure out the value 'a+b'(the sum of recordings of the given reaction 
@@ -29,6 +30,7 @@ def count_react(reactid, con):
     sql = (f"SELECT count FROM reactcount WHERE reactid = '{reactid}';")
     reactcount = pd.read_sql(sql, con)
     return reactcount['count'].values[0]
+
 
 def count_a(drugid, reactid, con):
     '''
@@ -41,25 +43,111 @@ def count_a(drugid, reactid, con):
     return reactcount['count'].values[0]
 
 
-def calculate(con):
+def ror_ci(a, b, c, d, ror):
+    ror_upper_ci_power = math.log(ror) + 1.96 * math.sqrt(1/a + 1/b + 1/c + 1/d)
+    ror_lower_ci_power = math.log(ror) - 1.96 * math.sqrt(1/a + 1/b + 1/c + 1/d)
+    ror_upper_ci = math.exp(ror_upper_ci_power)
+    ror_lower_ci = math.exp(ror_lower_ci_power)
+    return '%.2f' % ror_lower_ci, '%.2f' % ror_upper_ci
+
+
+def prr_ci(a, b, c, d, prr):
+    prr_upper_ci_power = math.log(prr) + 1.96 * math.sqrt(1/a + 1/b - 1/(a + c) - 1/(b + d))
+    prr_lower_ci_power = math.log(prr) - 1.96 * math.sqrt(1/a + 1/b - 1/(a + c) - 1/(b + d))
+    prr_upper_ci = math.exp(prr_upper_ci_power)
+    prr_lower_ci = math.exp(prr_lower_ci_power)
+    return '%.2f' % prr_lower_ci, '%.2f' % prr_upper_ci
+
+def insert_batch_data(
+        cursor, 
+        table:str, 
+        field:str,
+        data_batch
+):
+    '''
+    Insert values into table in batch
+    '''
+    insert_sql = f"""
+    INSERT INTO {table} {field}
+    VALUES %s
+    """
+    try:
+        execute_values(cursor, insert_sql, data_batch, template=None, page_size=100)
+        return True
+    except Exception as e:
+        print(f"Error: {e}")
+        return False
+    
+
+
+def calculate(
+        con, 
+        table, field,
+        batch_size = 1000
+):
     total = 6981059
-    sql = ("SELECT DISTINCT drugbank_id FROM drug21_24_map ORDER BY drugbank_id ASC limit 4")
+    sql = ("SELECT DISTINCT drugbank_id FROM drug21_24_map ORDER BY drugbank_id ASC limit 2")
     drugids = pd.read_sql(sql, con)
-    for drugid in drugids['drugbank_id']:
-        print(drugid)
-        reactids = get_drug_reaction(drugid)
-        ac = count_drug(drugid)
-        for reactid in reactids:
-            ab = count_react(reactid)
-            a = count_a(drugid, reactid)
-            b = ab - a
-            c = ac - a
-            d = total - ab - ac + a
-            if b == 0 or c == 0:
-                a+=0.5
-                b+=0.5
-                c+=0.5
-                d+=0.5
-            ror = (a * d) / (b * c)
-            prr = 
-            print(f'reaction_id: {reactid}, a: {a}, b: {b}, c: {c}, d: {d}, ror: {ror}')
+
+
+    cursor = con.cursor()
+    data_batch = []
+    total_inserted = 0
+
+    try:
+        for drugid in drugids['drugbank_id']:
+            try:
+                print(f"Processing: {drugid}")
+                reactids = get_drug_reaction(drugid)
+                ac = count_drug(drugid)
+                for reactid in reactids:
+                    ab = count_react(reactid)
+                    a = count_a(drugid, reactid)
+                    b = ab - a
+                    c = ac - a
+                    d = total - ab - ac + a
+                    if b == 0 or c == 0:
+                        a+=0.5
+                        b+=0.5
+                        c+=0.5
+                        d+=0.5
+                    ror = (a * d) / (b * c)
+                    ror_lower_ci, ror_upper_ci = ror_ci(a, b, c, d, ror)
+
+                    prr = a * (b + d)/(b * ac)
+                    prr_lower_ci, prr_upper_ci = prr_ci(a, b, c, d, prr)
+
+                    row_data = (
+                        drugid, reactid, 
+                        a, b, c, d, 
+                        float('%.2f' % ror), ror_lower_ci, ror_upper_ci, 
+                        float('%.2f' % prr), prr_lower_ci, prr_upper_ci
+                    )
+                    data_batch.append(row_data)
+                    if len(data_batch) >= batch_size:
+                        if insert_batch_data(cursor, table, field, data_batch):
+                            con.commit()
+                        else:
+                            con.rollback()
+                        data_batch = []
+
+
+                    print(drugid, reactid, a, b, c, d, '%.2f' % ror, ror_lower_ci, ror_upper_ci, '%.2f' % prr, prr_lower_ci, prr_upper_ci)
+                    #cur = conn.cursor()
+                    #cur.execute(f"INSERT INTO faersmining (drugid, reactid, a, b, c, d, ror, ror_lower_ci, ror_upper_ci, prr, prr_lower_ci, prr_upper_ci) VALUES('{drugid}', '{reactid}', {a}, {b}, {c}, {d}, {ror}, {ror_lower_ci}, {ror_upper_ci}, {prr}, {prr_lower_ci}, {prr_upper_ci})")
+            except Exception as e:
+                    print(f"Error When {drugid}-{reactid}: {e}")
+                    continue
+            
+        if data_batch:
+            if insert_batch_data(cursor, data_batch):
+                con.commit()
+            else:
+                con.rollback()
+    
+    except Exception as e:
+        print(f"Error: {e}")
+        con.rollback()
+    finally:
+        cursor.close()        
+
