@@ -189,11 +189,6 @@ def main(
     )
 
 
-main(
-    '10.12.0.8', 2043,
-    'root','ynby20250625','localhost' ,5432,
-    'FAERS20-24','postgres','woshipostgres','script_efficiency_test', 
-    '(drugid, reactid, a, b, c, d, ror, ror_lower_ci, ror_upper_ci, prr, prr_lower_ci, prr_upper_ci)'
-)
+
 
 
