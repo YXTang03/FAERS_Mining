@@ -61,7 +61,8 @@ def insert_batch_data(
         cursor, 
         table:str, 
         field:str,
-        data_batch
+        data_batch, 
+        error_log
 ):
     '''
     Insert values into table in batch
@@ -75,6 +76,8 @@ def insert_batch_data(
         return True
     except Exception as e:
         print(f"Error When insert_batch_data: {e}")
+        with open(error_log, 'a') as log:
+            log.write(f"Error When insert_batch_data: {e}\n")
         return False
     
 
@@ -82,7 +85,8 @@ def insert_batch_data(
 def calculate(
         con, 
         table, field,
-        batch_size = 1000
+        error_log,
+        batch_size = 1000, 
 ):
     total = 6981059
     sql = ("SELECT DISTINCT drugbank_id FROM drug21_24_map ORDER BY drugbank_id ASC")
@@ -125,7 +129,7 @@ def calculate(
                     )
                     data_batch.append(row_data)
                     if len(data_batch) >= batch_size:
-                        if insert_batch_data(cursor, table, field, data_batch):
+                        if insert_batch_data(cursor, table, field, data_batch, error_log):
                             con.commit()
                         else:
                             con.rollback()
@@ -137,16 +141,26 @@ def calculate(
                     #cur.execute(f"INSERT INTO faersmining (drugid, reactid, a, b, c, d, ror, ror_lower_ci, ror_upper_ci, prr, prr_lower_ci, prr_upper_ci) VALUES('{drugid}', '{reactid}', {a}, {b}, {c}, {d}, {ror}, {ror_lower_ci}, {ror_upper_ci}, {prr}, {prr_lower_ci}, {prr_upper_ci})")
             except Exception as e:
                     print(f"Error When {drugid}-{reactid}: {e}")
+                    with open(error_log, 'a') as log:
+                        log.write(f"Error When {drugid}-{reactid}: {e}\n")
                     continue
             
         if data_batch:
-            if insert_batch_data(cursor, table, field, data_batch):
+            if insert_batch_data(cursor, table, field, data_batch, error_log):
                 con.commit()
             else:
                 con.rollback()
     
     except Exception as e:
         print(f"Error: 1{e}")
+        with open(error_log, 'a') as log:
+            log.write(f"Error: 1{e}\n")
         con.rollback()
     finally:
+        print('**********Mission Completed**********')
         cursor.close()
+
+
+
+
+

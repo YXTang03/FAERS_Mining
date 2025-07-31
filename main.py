@@ -14,9 +14,11 @@ def main(
         db_user:str, 
         db_password:str, 
         table:str, 
-        field:str,        
+        field:str,
+        error_log,         
         db_host:str = '127.0.0.1', 
-        batch_size = 1000
+        batch_size = 1000, 
+        
 ):
     server = SSHTunnelForwarder(
     ssh_address_or_host=(ssh_address, ssh_port),
@@ -35,5 +37,6 @@ def main(
         con = conn, 
         table = table, 
         field = field,
-        batch_size = batch_size
+        batch_size = batch_size, 
+        error_log=error_log
     )
